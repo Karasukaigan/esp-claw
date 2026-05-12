@@ -14,6 +14,13 @@ import McpWebmEn from "@/assets/features/mcp-en.webm?url";
 import MemoryWebmEn from "@/assets/features/memory-en.webm?url";
 import MultiWebmEn from "@/assets/features/multi-en.webm?url";
 
+import VideoBV1kookBYEi7Thumbnail from "@/assets/video-thumbnail/bilibili-BV1kookBYEi7.webp?url";
+import VideoS0czt7Ld5fwThumbnail from "@/assets/video-thumbnail/youtube-S0czt7Ld5fw.webp?url";
+import VideoBV1UX9rBiEZ9TThumbnail from "@/assets/video-thumbnail/bilibili-BV1UX9rBiEZ9.webp?url";
+import VideoBV1QiohBEEt5Thumbnail from "@/assets/video-thumbnail/bilibili-BV1QiohBEEt5.webp?url";
+import VideoYoutubeCo8AjEXiu8AThumbnail from "@/assets/video-thumbnail/youtube-co8AjEXiu8A.webp?url";
+import VideoYoutubeD5VSzg2dSYwThumbnail from "@/assets/video-thumbnail/youtube-d5VSzg2dSYw.webp?url";
+
 export interface TerminalLine {
   cls: "prompt" | "output" | "info" | "warn";
   text: string;
@@ -31,6 +38,12 @@ export interface HighlightItem {
   title: string;
   subtitle: string;
   detail: string;
+}
+
+export interface VideoCaseItem {
+  thumbnail: string;
+  title: string;
+  videoUrl: string;
 }
 
 export interface HomeContent {
@@ -52,6 +65,8 @@ export interface HomeContent {
   whatsMissingAfterIoTP1: string;
   whatsMissingAfterIoTP2: string;
   featAndDemos: FeatAndDemoItem[];
+  videoCasesTitle: string;
+  videoCases: VideoCaseItem[];
 }
 
 const en: HomeContent = {
@@ -132,6 +147,29 @@ const en: HomeContent = {
       posterTime: 15,
     },
   ],
+  videoCasesTitle: "How They Use ESP-Claw",
+  videoCases: [
+    {
+      thumbnail: VideoBV1kookBYEi7Thumbnail,
+      title: "Create Games Simply by Chatting",
+      videoUrl: "https://www.youtube.com/watch?v=Nk3JbfvSVdw",
+    },
+    {
+      thumbnail: VideoS0czt7Ld5fwThumbnail,
+      title: "Running AI Agent on ESP32 S3 Board",
+      videoUrl: "https://www.youtube.com/watch?v=S0czt7Ld5fw",
+    },
+    {
+      thumbnail: VideoYoutubeCo8AjEXiu8AThumbnail,
+      title: "How to Raise an ESP32 Claw",
+      videoUrl: "https://www.youtube.com/watch?v=co8AjEXiu8A",
+    },
+    {
+      thumbnail: VideoYoutubeD5VSzg2dSYwThumbnail,
+      title: "ESP-Claw on M5Stack StickS3 & CoreS3",
+      videoUrl: "https://www.youtube.com/watch?v=d5VSzg2dSYw",
+    }
+  ],
 };
 
 const zhCn: HomeContent = {
@@ -211,6 +249,29 @@ const zhCn: HomeContent = {
       video: MemoryWebm,
       posterTime: 15,
     },
+  ],
+  videoCasesTitle: "Ta 们在这样使用 ESP-Claw",
+  videoCases: [
+    {
+      thumbnail: VideoBV1kookBYEi7Thumbnail,
+      title: "沉浸式组装 | 只靠聊天就能生成游戏",
+      videoUrl: "https://www.bilibili.com/video/BV1kookBYEi7",
+    },
+    {
+      thumbnail: VideoS0czt7Ld5fwThumbnail,
+      title: "在 ESP32-S3 开发板上运行 AI Agent",
+      videoUrl: "https://www.bilibili.com/video/BV1Mi5s6dEy2",
+    },
+    {
+      thumbnail: VideoBV1QiohBEEt5Thumbnail,
+      title: "龙虾！香！ESP-Claw实战演示",
+      videoUrl: "https://www.bilibili.com/video/BV1QiohBEEt5",
+    },
+    {
+      thumbnail: VideoBV1UX9rBiEZ9TThumbnail,
+      title: "乐鑫龙虾 ESP-Claw 专属开发套件介绍",
+      videoUrl: "https://www.bilibili.com/video/BV1UX9rBiEZ9",
+    }
   ],
 };
 
