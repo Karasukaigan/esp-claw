@@ -5,7 +5,7 @@
  */
 #include "lua_lvgl_private.h"
 
-static int lua_lvgl_set_text(lua_State *L)
+int lua_lvgl_set_text(lua_State *L)
 {
     lua_lvgl_obj_ud_t *ud = lua_lvgl_check_ud(L, 1);
     const char *text = luaL_checkstring(L, 2);
@@ -53,7 +53,7 @@ static int lua_lvgl_set_text(lua_State *L)
     return 1;
 }
 
-static int lua_lvgl_get_pos(lua_State *L)
+int lua_lvgl_get_pos(lua_State *L)
 {
     lua_lvgl_obj_ud_t *ud = lua_lvgl_check_ud(L, 1);
     esp_err_t err = lua_lvgl_lock();
@@ -74,7 +74,7 @@ static int lua_lvgl_get_pos(lua_State *L)
     return 2;
 }
 
-static int lua_lvgl_get_size(lua_State *L)
+int lua_lvgl_get_size(lua_State *L)
 {
     lua_lvgl_obj_ud_t *ud = lua_lvgl_check_ud(L, 1);
     esp_err_t err = lua_lvgl_lock();
@@ -95,7 +95,7 @@ static int lua_lvgl_get_size(lua_State *L)
     return 2;
 }
 
-static int lua_lvgl_is_valid(lua_State *L)
+int lua_lvgl_is_valid(lua_State *L)
 {
     lua_lvgl_obj_ud_t *ud = lua_lvgl_check_ud(L, 1);
     lua_lvgl_obj_record_t *record = ud->record;
@@ -119,7 +119,7 @@ static int lua_lvgl_is_valid(lua_State *L)
     return 1;
 }
 
-static int lua_lvgl_get_value(lua_State *L)
+int lua_lvgl_get_value(lua_State *L)
 {
     lua_lvgl_obj_ud_t *ud = lua_lvgl_check_ud(L, 1);
     lua_lvgl_obj_type_t type;
@@ -167,7 +167,7 @@ static int lua_lvgl_get_value(lua_State *L)
     return 1;
 }
 
-static int lua_lvgl_set_value(lua_State *L)
+int lua_lvgl_set_value(lua_State *L)
 {
     lua_lvgl_obj_ud_t *ud = lua_lvgl_check_ud(L, 1);
     lua_lvgl_obj_type_t type;
@@ -225,7 +225,7 @@ static int lua_lvgl_set_value(lua_State *L)
     return 1;
 }
 
-static int lua_lvgl_set_range(lua_State *L)
+int lua_lvgl_set_range(lua_State *L)
 {
     lua_lvgl_obj_ud_t *ud = lua_lvgl_check_ud(L, 1);
     int min_value = (int)luaL_checkinteger(L, 2);
@@ -267,7 +267,7 @@ static int lua_lvgl_set_range(lua_State *L)
     return 1;
 }
 
-static int lua_lvgl_set_pos(lua_State *L)
+int lua_lvgl_set_pos(lua_State *L)
 {
     lua_lvgl_obj_ud_t *ud = lua_lvgl_check_ud(L, 1);
     int x = (int)luaL_checkinteger(L, 2);
@@ -290,7 +290,7 @@ static int lua_lvgl_set_pos(lua_State *L)
     return 1;
 }
 
-static int lua_lvgl_set_size(lua_State *L)
+int lua_lvgl_set_size(lua_State *L)
 {
     lua_lvgl_obj_ud_t *ud = lua_lvgl_check_ud(L, 1);
     int w = (int)luaL_checkinteger(L, 2);
@@ -314,7 +314,7 @@ static int lua_lvgl_set_size(lua_State *L)
     return 1;
 }
 
-static int lua_lvgl_align(lua_State *L)
+int lua_lvgl_align(lua_State *L)
 {
     lua_lvgl_obj_ud_t *ud = lua_lvgl_check_ud(L, 1);
     const char *align_value = luaL_checkstring(L, 2);
@@ -344,16 +344,6 @@ static int lua_lvgl_align(lua_State *L)
     return 1;
 }
 
-const luaL_Reg lua_lvgl_value_funcs[] = {
-    {"set_text", lua_lvgl_set_text},
-    {"get_pos", lua_lvgl_get_pos},
-    {"get_size", lua_lvgl_get_size},
-    {"get_value", lua_lvgl_get_value},
-    {"is_valid", lua_lvgl_is_valid},
-    {"set_value", lua_lvgl_set_value},
-    {"set_range", lua_lvgl_set_range},
-    {"set_pos", lua_lvgl_set_pos},
-    {"set_size", lua_lvgl_set_size},
-    {"align", lua_lvgl_align},
-    {NULL, NULL},
-};
+/* These functions are exposed exclusively as methods on per-type metatables
+ * built in lua_lvgl_methods.c. They are no longer registered on the `lvgl`
+ * module table itself. */

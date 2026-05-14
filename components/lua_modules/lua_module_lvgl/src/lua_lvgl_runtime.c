@@ -108,14 +108,42 @@ static void lua_lvgl_stop_task(void)
     s_lvgl.task_handle = NULL;
 }
 
+static void lua_lvgl_drain_event_queue_locked(void)
+{
+    /* After lv_display_delete + invalidate_records, every record's events
+     * list has already been emptied via record_release_resources. Anything
+     * still sitting in the event queue is a `dead` sub waiting for the
+     * script task to free it. We do that here, while still on the script
+     * task and still holding the lock. */
+    while (s_lvgl.event_queue_head) {
+        lua_lvgl_event_sub_t *sub = s_lvgl.event_queue_head;
+
+        s_lvgl.event_queue_head = sub->queue_next;
+        sub->queue_next = NULL;
+        sub->queued = false;
+        lua_lvgl_queue_pending_unref_locked(sub->callback_ref);
+        sub->callback_ref = LUA_NOREF;
+        free(sub);
+    }
+    s_lvgl.event_queue_tail = NULL;
+}
+
 static void lua_lvgl_release_runtime_locked(void)
 {
+    /* Snapshot the owner before we clear it: lv_display_delete will fire
+     * LV_EVENT_DELETE on every widget which calls record_release_resources
+     * which in turn fills s_lvgl.pending_unrefs. We must drain pending
+     * unrefs against the still-live owner state below. */
+    lua_State *owner = s_lvgl.runtime_owner;
+
     if (s_lvgl.display) {
         lv_display_set_user_data(s_lvgl.display, NULL);
         lv_display_delete(s_lvgl.display);
         s_lvgl.display = NULL;
     }
     lua_lvgl_invalidate_records_locked();
+    lua_lvgl_drain_event_queue_locked();
+    lua_lvgl_drain_pending_unrefs_locked(owner);
     heap_caps_free(s_lvgl.draw_buf);
     s_lvgl.draw_buf = NULL;
     s_lvgl.draw_buf_size = 0;
@@ -213,12 +241,8 @@ static int lua_lvgl_init(lua_State *L)
         return lua_lvgl_error_esp(L, "lock", err);
     }
     if (s_lvgl.runtime_initialized) {
-        bool same_owner = s_lvgl.runtime_owner == L;
-
         lua_lvgl_unlock();
-        return luaL_error(L,
-                          same_owner ? "lvgl runtime is already initialized"
-                                     : "lvgl runtime is already initialized by another Lua runtime");
+        return luaL_error(L, "lvgl runtime is already initialized");
     }
     lua_lvgl_unlock();
 
@@ -321,7 +345,7 @@ static int lua_lvgl_deinit(lua_State *L)
 {
     esp_err_t err;
 
-    if (s_lvgl.runtime_initialized && s_lvgl.runtime_owner && s_lvgl.runtime_owner != L) {
+    if (s_lvgl.runtime_initialized && s_lvgl.runtime_owner != L) {
         return luaL_error(L, "lvgl runtime is owned by another Lua runtime");
     }
 
@@ -335,24 +359,17 @@ static int lua_lvgl_deinit(lua_State *L)
 }
 void lua_lvgl_state_cleanup(lua_State *L)
 {
-    esp_err_t err;
-
+    /* Single-script subsystem: only the runtime owner triggers a deinit on
+     * exit. Non-owner Lua states are expected to never create LVGL objects
+     * per the single-script rule (see RFC-single-script-ui.md), so no
+     * per-state object cleanup is performed here. */
     if (!L) {
         return;
     }
     if (s_lvgl.runtime_initialized && s_lvgl.runtime_owner == L) {
         ESP_LOGI(TAG, "Lua runtime cleanup: deinitializing lvgl owned by exiting state");
         (void)lua_lvgl_deinit_runtime();
-        return;
     }
-
-    err = lua_lvgl_lock();
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "Lua runtime cleanup: lock failed: %s", esp_err_to_name(err));
-        return;
-    }
-    lua_lvgl_cleanup_state_objects_locked(L);
-    lua_lvgl_unlock();
 }
 
 const luaL_Reg lua_lvgl_runtime_funcs[] = {

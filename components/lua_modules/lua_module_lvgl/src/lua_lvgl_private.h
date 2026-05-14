@@ -26,7 +26,6 @@
 #include "lvgl.h"
 
 #define LUA_MODULE_LVGL_NAME "lvgl"
-#define LUA_MODULE_LVGL_OBJ_METATABLE "lvgl.obj"
 #define LUA_MODULE_LVGL_DEFAULT_BUFFER_LINES 40
 #define LUA_MODULE_LVGL_DEFAULT_TICK_MS 5
 #define LUA_MODULE_LVGL_DEFAULT_TASK_PERIOD_MS 10
@@ -61,6 +60,37 @@ typedef enum {
     LUA_LVGL_OBJ_TABLE,
 } lua_lvgl_obj_type_t;
 
+/* Forward declaration so lua_lvgl_event_sub_t can hold a back-pointer to
+ * its owning record. */
+struct lua_lvgl_obj_record;
+
+/* A single LVGL event subscription created by `obj:on(event_name, cb)`.
+ *
+ * Lifecycle and ownership are documented in RFC §4.2; the short version is:
+ *   - linked into record->events while logically registered
+ *   - linked into s_lvgl.event_queue while waiting for dispatch
+ *   - `queued` coalesces repeated fires while still pending
+ *   - `dead` is set when off() / record release happens while the sub is
+ *     queued, so process_events frees the sub on dequeue rather than racing
+ */
+typedef struct lua_lvgl_event_sub {
+    int callback_ref;        /* LUA_NOREF after release */
+    lv_event_code_t code;
+    struct lua_lvgl_obj_record *record;
+    struct lua_lvgl_event_sub *next;       /* in record->events */
+    struct lua_lvgl_event_sub *queue_next; /* in s_lvgl.event_queue */
+    bool queued;
+    bool dead;
+} lua_lvgl_event_sub_t;
+
+/* A registry ref deferred for unref so it can always be released on the
+ * script task (luaL_unref is not safe to call from the LVGL task because
+ * it touches the lua_State registry). */
+typedef struct lua_lvgl_pending_unref {
+    int ref;
+    struct lua_lvgl_pending_unref *next;
+} lua_lvgl_pending_unref_t;
+
 typedef struct lua_lvgl_obj_record {
     lv_obj_t *obj;
     lv_obj_t *aux_obj;
@@ -71,9 +101,8 @@ typedef struct lua_lvgl_obj_record {
     int value_cache;
     uint32_t generation;
     lua_lvgl_obj_type_t type;
-    lua_State *owner;
-    bool owned;
     bool valid;
+    lua_lvgl_event_sub_t *events;
     struct lua_lvgl_obj_record *next;
 } lua_lvgl_obj_record_t;
 
@@ -103,6 +132,9 @@ typedef struct {
     size_t draw_buf_size;
     lua_State *runtime_owner;
     lua_lvgl_obj_record_t *records;
+    lua_lvgl_event_sub_t *event_queue_head;
+    lua_lvgl_event_sub_t *event_queue_tail;
+    lua_lvgl_pending_unref_t *pending_unrefs;
 } lua_lvgl_state_t;
 
 typedef struct {
@@ -126,13 +158,70 @@ int lua_lvgl_error_esp(lua_State *L, const char *what, esp_err_t err);
 
 lua_lvgl_obj_ud_t *lua_lvgl_check_ud(lua_State *L, int index);
 void lua_lvgl_record_release_resources(lua_lvgl_obj_record_t *record);
-lua_lvgl_obj_ud_t *lua_lvgl_push_obj(lua_State *L, lv_obj_t *obj, lua_lvgl_obj_type_t type, bool owned);
+lua_lvgl_obj_ud_t *lua_lvgl_push_obj(lua_State *L, lv_obj_t *obj, lua_lvgl_obj_type_t type);
 lv_obj_t *lua_lvgl_validate_ud_locked(const lua_lvgl_obj_ud_t *ud,
                                       lua_lvgl_obj_type_t *out_type,
                                       const char **out_error);
-void lua_lvgl_cleanup_state_objects_locked(lua_State *L);
 void lua_lvgl_invalidate_records_locked(void);
 int lua_lvgl_obj_gc(lua_State *L);
+
+/* Method-style API support: build all per-type metatables under
+ * "lvgl.obj.<type>" and resolve type->mt-name. See lua_lvgl_methods.c. */
+const char *lua_lvgl_metatable_for_type(lua_lvgl_obj_type_t type);
+void lua_lvgl_register_metatables(lua_State *L);
+
+/* Per-widget method implementations (also reachable as plain C functions
+ * because method tables only re-export them as Lua methods). All listed
+ * here are non-static so the metatable wiring in lua_lvgl_methods.c can
+ * compose method tables across translation units. */
+
+/* lua_lvgl_value.c */
+int lua_lvgl_set_text(lua_State *L);
+int lua_lvgl_get_pos(lua_State *L);
+int lua_lvgl_get_size(lua_State *L);
+int lua_lvgl_get_value(lua_State *L);
+int lua_lvgl_is_valid(lua_State *L);
+int lua_lvgl_set_value(lua_State *L);
+int lua_lvgl_set_range(lua_State *L);
+int lua_lvgl_set_pos(lua_State *L);
+int lua_lvgl_set_size(lua_State *L);
+int lua_lvgl_align(lua_State *L);
+
+/* lua_lvgl_style.c */
+int lua_lvgl_set_style(lua_State *L);
+
+/* lua_lvgl_layout.c */
+int lua_lvgl_set_flex(lua_State *L);
+int lua_lvgl_set_grid(lua_State *L);
+int lua_lvgl_set_grid_cell(lua_State *L);
+int lua_lvgl_set_scroll(lua_State *L);
+
+/* lua_lvgl_object.c */
+int lua_lvgl_delete(lua_State *L);
+int lua_lvgl_clean(lua_State *L);
+
+/* lua_lvgl_core_widgets.c */
+int lua_lvgl_screen_load(lua_State *L);
+
+/* lua_lvgl_extra_widgets.c */
+int lua_lvgl_list_add_text(lua_State *L);
+int lua_lvgl_list_add_button(lua_State *L);
+int lua_lvgl_table_set_cell(lua_State *L);
+int lua_lvgl_table_get_cell(lua_State *L);
+
+/* lua_lvgl_events.c */
+int lua_lvgl_obj_on(lua_State *L);
+int lua_lvgl_obj_off(lua_State *L);
+/* Free a sub linked into record->events: detach from LVGL, defer unref of
+ * its callback ref via pending_unrefs (or mark dead if currently queued).
+ * Caller must hold lua_lvgl_lock(). */
+void lua_lvgl_record_release_events_locked(lua_lvgl_obj_record_t *record);
+/* Append a registry ref to s_lvgl.pending_unrefs; ref must come from
+ * luaL_ref(). Safe to call from LVGL task. Caller must hold lua_lvgl_lock(). */
+void lua_lvgl_queue_pending_unref_locked(int ref);
+/* Drain pending_unrefs by luaL_unref'ing each on L. Caller must hold
+ * lua_lvgl_lock() and must be running on the script task. */
+void lua_lvgl_drain_pending_unrefs_locked(lua_State *L);
 
 int lua_lvgl_get_opt_int_field(lua_State *L, int index, const char *field, int default_value);
 const char *lua_lvgl_get_opt_string_field(lua_State *L, int index, const char *field);
@@ -163,10 +252,11 @@ esp_err_t lua_lvgl_deinit_runtime(void);
 void lua_lvgl_state_cleanup(lua_State *L);
 int lua_lvgl_create_widget(lua_State *L, lua_lvgl_obj_type_t type);
 
+/* Module-level function tables: only runtime + factories + event-loop
+ * helpers are exposed on the `lvgl` module table. Object setters/getters
+ * are exposed exclusively as methods through metatables built in
+ * lua_lvgl_methods.c. */
 extern const luaL_Reg lua_lvgl_runtime_funcs[];
 extern const luaL_Reg lua_lvgl_core_widget_funcs[];
 extern const luaL_Reg lua_lvgl_extra_widget_funcs[];
-extern const luaL_Reg lua_lvgl_value_funcs[];
-extern const luaL_Reg lua_lvgl_style_funcs[];
-extern const luaL_Reg lua_lvgl_layout_funcs[];
-extern const luaL_Reg lua_lvgl_object_funcs[];
+extern const luaL_Reg lua_lvgl_event_module_funcs[];

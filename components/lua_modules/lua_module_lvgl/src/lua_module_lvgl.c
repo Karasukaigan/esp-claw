@@ -15,21 +15,21 @@ static void lua_lvgl_register_funcs(lua_State *L, const luaL_Reg *funcs)
 
 int luaopen_lvgl(lua_State *L)
 {
-    if (luaL_newmetatable(L, LUA_MODULE_LVGL_OBJ_METATABLE)) {
-        lua_pushcfunction(L, lua_lvgl_obj_gc);
-        lua_setfield(L, -2, "__gc");
-    }
-    lua_pop(L, 1);
+    /* Build all per-type metatables ("lvgl.obj.<type>") with their
+     * inherited base methods. After this, lua_lvgl_push_obj() can find
+     * the right metatable for any widget type via lua_lvgl_metatable_for_type().
+     */
+    lua_lvgl_register_metatables(L);
 
+    /* The `lvgl` module table now hosts only runtime + factory entries.
+     * All object operations (set_xxx / get_xxx / delete / clean / load /
+     * add_text / set_cell / ...) are invoked as methods on widget userdata. */
     lua_newtable(L);
 
     lua_lvgl_register_funcs(L, lua_lvgl_runtime_funcs);
     lua_lvgl_register_funcs(L, lua_lvgl_core_widget_funcs);
     lua_lvgl_register_funcs(L, lua_lvgl_extra_widget_funcs);
-    lua_lvgl_register_funcs(L, lua_lvgl_value_funcs);
-    lua_lvgl_register_funcs(L, lua_lvgl_style_funcs);
-    lua_lvgl_register_funcs(L, lua_lvgl_layout_funcs);
-    lua_lvgl_register_funcs(L, lua_lvgl_object_funcs);
+    lua_lvgl_register_funcs(L, lua_lvgl_event_module_funcs);
 
     lua_pushinteger(L, LUA_MODULE_LVGL_PANEL_IF_IO);
     lua_setfield(L, -2, "PANEL_IF_IO");

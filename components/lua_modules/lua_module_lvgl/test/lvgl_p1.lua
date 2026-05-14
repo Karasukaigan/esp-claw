@@ -13,7 +13,7 @@ lvgl.init(panel_handle, io_handle, width, height, panel_if, {
 
 local ok, err = pcall(function()
     local scr = lvgl.create_screen()
-    lvgl.set_style(scr, { bg_color = "#0f172a" })
+    scr:set_style({ bg_color = "#0f172a" })
 
     local root = lvgl.container(scr, {
         align = "top_mid",
@@ -30,7 +30,7 @@ local ok, err = pcall(function()
         pad_row = 6,
         pad_column = 6,
     })
-    lvgl.set_grid(root, {
+    root:set_grid({
         cols = { "fr", "fr", "fr" },
         rows = { 54, 74, 74, "fr" },
         col_align = "stretch",
@@ -43,8 +43,8 @@ local ok, err = pcall(function()
         text = "Pick",
         dir = "bottom",
     })
-    lvgl.set_grid_cell(dd, { col = 1, row = 1 })
-    lvgl.set_value(dd, 3)
+    dd:set_grid_cell({ col = 1, row = 1 })
+    dd:set_value(3)
 
     local roller = lvgl.roller(root, {
         options = "A\nB\nC\nD",
@@ -52,7 +52,7 @@ local ok, err = pcall(function()
         visible_rows = 3,
         mode = "normal",
     })
-    lvgl.set_grid_cell(roller, { col = 2, row = 1 })
+    roller:set_grid_cell({ col = 2, row = 1 })
 
     local textarea = lvgl.textarea(root, {
         text = "Lua",
@@ -61,7 +61,7 @@ local ok, err = pcall(function()
         max_length = 16,
         accepted_chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ",
     })
-    lvgl.set_grid_cell(textarea, { col = 3, row = 1 })
+    textarea:set_grid_cell({ col = 3, row = 1 })
 
     local line = lvgl.line(root, {
         points = {
@@ -72,7 +72,7 @@ local ok, err = pcall(function()
         line_color = "#38bdf8",
         line_width = 3,
     })
-    lvgl.set_grid_cell(line, { col = 1, row = 2 })
+    line:set_grid_cell({ col = 1, row = 2 })
 
     local arc = lvgl.arc(root, {
         min = 0,
@@ -85,14 +85,14 @@ local ok, err = pcall(function()
         arc_width = 8,
         line_color = "#f97316",
     })
-    lvgl.set_grid_cell(arc, { col = 2, row = 2 })
-    lvgl.set_value(arc, 70)
+    arc:set_grid_cell({ col = 2, row = 2 })
+    arc:set_value(70)
 
     local spinner = lvgl.spinner(root, {
         anim_ms = 1000,
         arc_sweep = 75,
     })
-    lvgl.set_grid_cell(spinner, { col = 3, row = 2 })
+    spinner:set_grid_cell({ col = 3, row = 2 })
 
     local scale = lvgl.scale(root, {
         mode = "round_inner",
@@ -104,20 +104,20 @@ local ok, err = pcall(function()
         angle_range = 240,
         rotation = 150,
     })
-    lvgl.set_grid_cell(scale, { col = 1, row = 3 })
-    lvgl.set_value(scale, 55)
+    scale:set_grid_cell({ col = 1, row = 3 })
+    scale:set_value(55)
 
     local list = lvgl.list(root, {
         bg_color = "#111827",
         border_width = 0,
         radius = 4,
     })
-    lvgl.set_grid_cell(list, { col = 2, row = 3, row_span = 2 })
-    lvgl.list_text(list, "List")
-    lvgl.list_button(list, "Item 1")
-    lvgl.list_button(list, "Item 2")
+    list:set_grid_cell({ col = 2, row = 3, row_span = 2 })
+    list:add_text("List")
+    list:add_button("Item 1")
+    list:add_button("Item 2")
 
-    local table = lvgl.table(root, {
+    local table_obj = lvgl.table(root, {
         rows = 2,
         cols = 2,
         cells = {
@@ -126,9 +126,9 @@ local ok, err = pcall(function()
         },
         column_widths = { 48, 48 },
     })
-    lvgl.table_set_cell(table, 2, 2, "ok")
-    local cell = lvgl.table_get_cell(table, 2, 2)
-    lvgl.set_grid_cell(table, { col = 3, row = 3 })
+    table_obj:set_cell(2, 2, "ok")
+    local cell = table_obj:get_cell(2, 2)
+    table_obj:set_grid_cell({ col = 3, row = 3 })
 
     local keyboard = lvgl.keyboard(root, {
         mode = "text_lower",
@@ -136,7 +136,7 @@ local ok, err = pcall(function()
         textarea = textarea,
         h = 84,
     })
-    lvgl.set_grid_cell(keyboard, { col = 1, row = 4, col_span = 3 })
+    keyboard:set_grid_cell({ col = 1, row = 4, col_span = 3 })
 
     lvgl.checkbox(root, {
         text = "cell " .. cell,
@@ -144,7 +144,7 @@ local ok, err = pcall(function()
         text_color = "#e2e8f0",
     })
 
-    lvgl.load(scr)
+    scr:load()
     delay.delay_ms(5000)
 end)
 

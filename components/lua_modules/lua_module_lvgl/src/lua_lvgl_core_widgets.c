@@ -18,7 +18,7 @@ static int lua_lvgl_screen(lua_State *L)
         return luaL_error(L, "lvgl runtime is not initialized");
     }
     screen = lv_screen_active();
-    if (!lua_lvgl_push_obj(L, screen, LUA_LVGL_OBJ_SCREEN, false)) {
+    if (!lua_lvgl_push_obj(L, screen, LUA_LVGL_OBJ_SCREEN)) {
         lua_lvgl_unlock();
         return luaL_error(L, "lvgl object record allocation failed");
     }
@@ -39,7 +39,7 @@ static int lua_lvgl_create_screen(lua_State *L)
         return luaL_error(L, "lvgl runtime is not initialized");
     }
     screen = lv_obj_create(NULL);
-    if (!lua_lvgl_push_obj(L, screen, LUA_LVGL_OBJ_SCREEN, true)) {
+    if (!lua_lvgl_push_obj(L, screen, LUA_LVGL_OBJ_SCREEN)) {
         lv_obj_delete(screen);
         lua_lvgl_unlock();
         return luaL_error(L, "lvgl object record allocation failed");
@@ -48,9 +48,10 @@ static int lua_lvgl_create_screen(lua_State *L)
     return 1;
 }
 
-static int lua_lvgl_load(lua_State *L)
+int lua_lvgl_screen_load(lua_State *L)
 {
     lua_lvgl_obj_ud_t *ud = lua_lvgl_check_ud(L, 1);
+    lua_lvgl_obj_type_t type;
     esp_err_t err = lua_lvgl_lock();
     lv_obj_t *screen;
     const char *obj_error = NULL;
@@ -58,10 +59,14 @@ static int lua_lvgl_load(lua_State *L)
     if (err != ESP_OK) {
         return lua_lvgl_error_esp(L, "lock", err);
     }
-    screen = lua_lvgl_validate_ud_locked(ud, NULL, &obj_error);
+    screen = lua_lvgl_validate_ud_locked(ud, &type, &obj_error);
     if (!screen) {
         lua_lvgl_unlock();
         return luaL_error(L, "%s", obj_error);
+    }
+    if (type != LUA_LVGL_OBJ_SCREEN) {
+        lua_lvgl_unlock();
+        return luaL_error(L, "lvgl load requires a screen object");
     }
     lv_screen_load(screen);
     lua_lvgl_unlock();
@@ -426,7 +431,7 @@ int lua_lvgl_create_widget(lua_State *L, lua_lvgl_obj_type_t type)
         lua_lvgl_apply_style_opts_locked(L, 2, obj);
     }
 
-    created_ud = lua_lvgl_push_obj(L, obj, type, true);
+    created_ud = lua_lvgl_push_obj(L, obj, type);
     if (!created_ud) {
         lv_obj_delete(obj);
         lua_lvgl_unlock();
@@ -477,10 +482,12 @@ static int lua_lvgl_slider(lua_State *L)
     return lua_lvgl_create_widget(L, LUA_LVGL_OBJ_SLIDER);
 }
 
+/* Only widget factories and screen-related runtime helpers are registered on
+ * the `lvgl` module table. Object operations (including screen:load()) are
+ * registered as methods in lua_lvgl_methods.c. */
 const luaL_Reg lua_lvgl_core_widget_funcs[] = {
     {"screen", lua_lvgl_screen},
     {"create_screen", lua_lvgl_create_screen},
-    {"load", lua_lvgl_load},
     {"object", lua_lvgl_object},
     {"container", lua_lvgl_container},
     {"label", lua_lvgl_label},

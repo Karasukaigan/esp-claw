@@ -13,7 +13,7 @@ lvgl.init(panel_handle, io_handle, width, height, panel_if, {
 
 local ok, err = pcall(function()
     local scr = lvgl.create_screen()
-    lvgl.set_style(scr, {
+    scr:set_style({
         bg_color = "#101820",
     })
 
@@ -37,7 +37,7 @@ local ok, err = pcall(function()
         pad = 10,
         pad_row = 8,
     })
-    lvgl.set_flex(panel, {
+    panel:set_flex({
         flow = "column",
         main = "center",
         cross = "center",
@@ -52,7 +52,7 @@ local ok, err = pcall(function()
         bg_color = "#2f80ed",
         text_color = "#ffffff",
     })
-    lvgl.set_text(button, "Updated")
+    button:set_text("Updated")
 
     local checkbox = lvgl.checkbox(panel, {
         text = "checked",
@@ -71,7 +71,7 @@ local ok, err = pcall(function()
         value = 65,
         bg_color = "#263241",
     })
-    lvgl.set_value(bar, 72)
+    bar:set_value(72)
 
     local slider = lvgl.slider(scr, {
         align = "bottom_mid",
@@ -83,13 +83,13 @@ local ok, err = pcall(function()
         max = 100,
         value = 35,
     })
-    lvgl.set_range(slider, 0, 120)
-    lvgl.set_value(slider, 48)
+    slider:set_range(0, 120)
+    slider:set_value(48)
 
-    local value = lvgl.get_value(slider)
-    lvgl.set_text(checkbox, "slider " .. value)
+    local value = slider:get_value()
+    checkbox:set_text("slider " .. value)
 
-    lvgl.load(scr)
+    scr:load()
     delay.delay_ms(5000)
 end)
 

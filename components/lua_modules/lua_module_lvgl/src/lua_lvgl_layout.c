@@ -5,7 +5,7 @@
  */
 #include "lua_lvgl_private.h"
 
-static int lua_lvgl_set_flex(lua_State *L)
+int lua_lvgl_set_flex(lua_State *L)
 {
     lua_lvgl_obj_ud_t *ud = lua_lvgl_check_ud(L, 1);
     lv_flex_flow_t flow;
@@ -48,7 +48,7 @@ static int lua_lvgl_set_flex(lua_State *L)
     return 1;
 }
 
-static int lua_lvgl_set_grid(lua_State *L)
+int lua_lvgl_set_grid(lua_State *L)
 {
     lua_lvgl_obj_ud_t *ud = lua_lvgl_check_ud(L, 1);
     int32_t *cols;
@@ -97,7 +97,7 @@ static int lua_lvgl_set_grid(lua_State *L)
     return 1;
 }
 
-static int lua_lvgl_set_grid_cell(lua_State *L)
+int lua_lvgl_set_grid_cell(lua_State *L)
 {
     lua_lvgl_obj_ud_t *ud = lua_lvgl_check_ud(L, 1);
     int col;
@@ -136,7 +136,7 @@ static int lua_lvgl_set_grid_cell(lua_State *L)
     return 1;
 }
 
-static int lua_lvgl_set_scroll(lua_State *L)
+int lua_lvgl_set_scroll(lua_State *L)
 {
     lua_lvgl_obj_ud_t *ud = lua_lvgl_check_ud(L, 1);
     lv_dir_t dir;
@@ -173,10 +173,5 @@ static int lua_lvgl_set_scroll(lua_State *L)
     return 1;
 }
 
-const luaL_Reg lua_lvgl_layout_funcs[] = {
-    {"set_flex", lua_lvgl_set_flex},
-    {"set_grid", lua_lvgl_set_grid},
-    {"set_grid_cell", lua_lvgl_set_grid_cell},
-    {"set_scroll", lua_lvgl_set_scroll},
-    {NULL, NULL},
-};
+/* Layout helpers are exposed via the base method table in
+ * lua_lvgl_methods.c. */

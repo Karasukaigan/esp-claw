@@ -7,7 +7,25 @@
 
 lua_lvgl_obj_ud_t *lua_lvgl_check_ud(lua_State *L, int index)
 {
-    return (lua_lvgl_obj_ud_t *)luaL_checkudata(L, index, LUA_MODULE_LVGL_OBJ_METATABLE);
+    /* Accept any of the per-type metatables registered under "lvgl.obj.*"
+     * by checking a shared sentinel field on the metatable. This avoids
+     * binding lua_lvgl_check_ud to a single metatable name and lets each
+     * widget type carry its own method table while still being recognized
+     * here uniformly. */
+    void *ud = lua_touserdata(L, index);
+
+    if (ud != NULL && lua_getmetatable(L, index)) {
+        int found;
+
+        lua_getfield(L, -1, "__lvgl_obj");
+        found = lua_toboolean(L, -1);
+        lua_pop(L, 2);
+        if (found) {
+            return (lua_lvgl_obj_ud_t *)ud;
+        }
+    }
+    luaL_argerror(L, index, "lvgl object expected");
+    return NULL;
 }
 
 void lua_lvgl_record_release_resources(lua_lvgl_obj_record_t *record)
@@ -15,6 +33,11 @@ void lua_lvgl_record_release_resources(lua_lvgl_obj_record_t *record)
     if (!record) {
         return;
     }
+    /* Event subs may be queued for dispatch on the script task, so we must
+     * not luaL_unref here directly (callers include LVGL task paths). The
+     * helper below pushes refs to s_lvgl.pending_unrefs which is drained
+     * from script-task code paths (process_events / run / deinit). */
+    lua_lvgl_record_release_events_locked(record);
     free(record->line_points);
     record->line_points = NULL;
     record->line_point_count = 0;
@@ -67,7 +90,7 @@ lv_obj_t *lua_lvgl_validate_ud_locked(const lua_lvgl_obj_ud_t *ud,
     return record->obj;
 }
 
-lua_lvgl_obj_ud_t *lua_lvgl_push_obj(lua_State *L, lv_obj_t *obj, lua_lvgl_obj_type_t type, bool owned)
+lua_lvgl_obj_ud_t *lua_lvgl_push_obj(lua_State *L, lv_obj_t *obj, lua_lvgl_obj_type_t type)
 {
     lua_lvgl_obj_record_t *record = (lua_lvgl_obj_record_t *)calloc(1, sizeof(*record));
     lua_lvgl_obj_ud_t *ud;
@@ -79,14 +102,12 @@ lua_lvgl_obj_ud_t *lua_lvgl_push_obj(lua_State *L, lv_obj_t *obj, lua_lvgl_obj_t
     record->obj = obj;
     record->generation = s_lvgl.generation;
     record->type = type;
-    record->owner = L;
-    record->owned = owned;
     record->valid = true;
     record->next = s_lvgl.records;
     s_lvgl.records = record;
     ud->record = record;
     lv_obj_add_event_cb(obj, lua_lvgl_obj_delete_event_cb, LV_EVENT_DELETE, record);
-    luaL_getmetatable(L, LUA_MODULE_LVGL_OBJ_METATABLE);
+    luaL_getmetatable(L, lua_lvgl_metatable_for_type(type));
     lua_setmetatable(L, -2);
     return ud;
 }
@@ -103,42 +124,7 @@ void lua_lvgl_invalidate_records_locked(void)
     }
 }
 
-void lua_lvgl_cleanup_state_objects_locked(lua_State *L)
-{
-    lua_lvgl_obj_record_t *record;
-    lv_obj_t *fallback_screen = NULL;
-
-    if (!L || !s_lvgl.runtime_initialized) {
-        return;
-    }
-
-    for (record = s_lvgl.records; record != NULL; record = record->next) {
-        if (record->generation != s_lvgl.generation ||
-                record->owner != L ||
-                !record->owned ||
-                !record->valid ||
-                !record->obj) {
-            continue;
-        }
-        if (!lv_obj_is_valid(record->obj)) {
-            record->obj = NULL;
-            record->valid = false;
-            continue;
-        }
-        if (record->obj == lv_screen_active()) {
-            if (!fallback_screen) {
-                fallback_screen = lv_obj_create(NULL);
-            }
-            if (fallback_screen) {
-                lv_screen_load(fallback_screen);
-            }
-        }
-        lv_obj_delete(record->obj);
-        record->obj = NULL;
-        record->valid = false;
-    }
-}
-static int lua_lvgl_delete(lua_State *L)
+int lua_lvgl_delete(lua_State *L)
 {
     lua_lvgl_obj_ud_t *ud = lua_lvgl_check_ud(L, 1);
     lua_lvgl_obj_record_t *record = ud->record;
@@ -165,7 +151,7 @@ static int lua_lvgl_delete(lua_State *L)
     return 1;
 }
 
-static int lua_lvgl_clean(lua_State *L)
+int lua_lvgl_clean(lua_State *L)
 {
     lua_lvgl_obj_ud_t *ud = lua_lvgl_check_ud(L, 1);
     esp_err_t err = lua_lvgl_lock();
@@ -188,14 +174,14 @@ static int lua_lvgl_clean(lua_State *L)
 
 int lua_lvgl_obj_gc(lua_State *L)
 {
-    lua_lvgl_obj_ud_t *ud = (lua_lvgl_obj_ud_t *)luaL_checkudata(L, 1, LUA_MODULE_LVGL_OBJ_METATABLE);
+    /* __gc is only ever invoked by Lua on userdata whose metatable we set
+     * to one of the "lvgl.obj.*" tables in lua_lvgl_push_obj, so the cast
+     * is unconditionally safe. We avoid lua_lvgl_check_ud here because it
+     * raises a Lua error on failure, which is undesirable inside __gc. */
+    lua_lvgl_obj_ud_t *ud = (lua_lvgl_obj_ud_t *)lua_touserdata(L, 1);
 
-    ud->record = NULL;
+    if (ud != NULL) {
+        ud->record = NULL;
+    }
     return 0;
 }
-
-const luaL_Reg lua_lvgl_object_funcs[] = {
-    {"delete", lua_lvgl_delete},
-    {"clean", lua_lvgl_clean},
-    {NULL, NULL},
-};

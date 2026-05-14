@@ -84,7 +84,7 @@ void lua_lvgl_apply_style_opts_locked(lua_State *L, int index, lv_obj_t *obj)
     lua_lvgl_apply_style_int_field(L, index, obj, "line_width");
     lua_lvgl_apply_style_int_field(L, index, obj, "arc_width");
 }
-static int lua_lvgl_set_style(lua_State *L)
+int lua_lvgl_set_style(lua_State *L)
 {
     lua_lvgl_obj_ud_t *ud = lua_lvgl_check_ud(L, 1);
     esp_err_t err = lua_lvgl_lock();
@@ -106,7 +106,5 @@ static int lua_lvgl_set_style(lua_State *L)
     return 1;
 }
 
-const luaL_Reg lua_lvgl_style_funcs[] = {
-    {"set_style", lua_lvgl_set_style},
-    {NULL, NULL},
-};
+/* set_style is exposed as a method on every widget metatable via the base
+ * method table in lua_lvgl_methods.c. */

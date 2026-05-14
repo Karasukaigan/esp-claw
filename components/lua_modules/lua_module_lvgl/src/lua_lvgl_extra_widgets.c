@@ -69,7 +69,7 @@ static int lua_lvgl_table(lua_State *L)
 {
     return lua_lvgl_create_widget(L, LUA_LVGL_OBJ_TABLE);
 }
-static int lua_lvgl_list_text(lua_State *L)
+int lua_lvgl_list_add_text(lua_State *L)
 {
     lua_lvgl_obj_ud_t *ud = lua_lvgl_check_ud(L, 1);
     const char *text = luaL_checkstring(L, 2);
@@ -89,10 +89,10 @@ static int lua_lvgl_list_text(lua_State *L)
     }
     if (type != LUA_LVGL_OBJ_LIST) {
         lua_lvgl_unlock();
-        return luaL_error(L, "lvgl list_text requires a list object");
+        return luaL_error(L, "lvgl list:add_text requires a list object");
     }
     obj = lv_list_add_text(list, text);
-    if (!lua_lvgl_push_obj(L, obj, LUA_LVGL_OBJ_LIST_TEXT, true)) {
+    if (!lua_lvgl_push_obj(L, obj, LUA_LVGL_OBJ_LIST_TEXT)) {
         lua_lvgl_unlock();
         return luaL_error(L, "lvgl object record allocation failed");
     }
@@ -100,7 +100,7 @@ static int lua_lvgl_list_text(lua_State *L)
     return 1;
 }
 
-static int lua_lvgl_list_button(lua_State *L)
+int lua_lvgl_list_add_button(lua_State *L)
 {
     lua_lvgl_obj_ud_t *ud = lua_lvgl_check_ud(L, 1);
     const char *text = luaL_checkstring(L, 2);
@@ -121,10 +121,10 @@ static int lua_lvgl_list_button(lua_State *L)
     }
     if (type != LUA_LVGL_OBJ_LIST) {
         lua_lvgl_unlock();
-        return luaL_error(L, "lvgl list_button requires a list object");
+        return luaL_error(L, "lvgl list:add_button requires a list object");
     }
     obj = lv_list_add_button(list, symbol, text);
-    if (!lua_lvgl_push_obj(L, obj, LUA_LVGL_OBJ_LIST_BUTTON, true)) {
+    if (!lua_lvgl_push_obj(L, obj, LUA_LVGL_OBJ_LIST_BUTTON)) {
         lua_lvgl_unlock();
         return luaL_error(L, "lvgl object record allocation failed");
     }
@@ -132,7 +132,7 @@ static int lua_lvgl_list_button(lua_State *L)
     return 1;
 }
 
-static int lua_lvgl_table_set_cell(lua_State *L)
+int lua_lvgl_table_set_cell(lua_State *L)
 {
     lua_lvgl_obj_ud_t *ud = lua_lvgl_check_ud(L, 1);
     int row = (int)luaL_checkinteger(L, 2);
@@ -154,7 +154,7 @@ static int lua_lvgl_table_set_cell(lua_State *L)
     }
     if (type != LUA_LVGL_OBJ_TABLE) {
         lua_lvgl_unlock();
-        return luaL_error(L, "lvgl table_set_cell requires a table object");
+        return luaL_error(L, "lvgl table:set_cell requires a table object");
     }
     lv_table_set_cell_value(table, (uint32_t)(row - 1), (uint32_t)(col - 1), text);
     lua_lvgl_unlock();
@@ -162,7 +162,7 @@ static int lua_lvgl_table_set_cell(lua_State *L)
     return 1;
 }
 
-static int lua_lvgl_table_get_cell(lua_State *L)
+int lua_lvgl_table_get_cell(lua_State *L)
 {
     lua_lvgl_obj_ud_t *ud = lua_lvgl_check_ud(L, 1);
     int row = (int)luaL_checkinteger(L, 2);
@@ -184,7 +184,7 @@ static int lua_lvgl_table_get_cell(lua_State *L)
     }
     if (type != LUA_LVGL_OBJ_TABLE) {
         lua_lvgl_unlock();
-        return luaL_error(L, "lvgl table_get_cell requires a table object");
+        return luaL_error(L, "lvgl table:get_cell requires a table object");
     }
     value = lv_table_get_cell_value(table, (uint32_t)(row - 1), (uint32_t)(col - 1));
     lua_pushstring(L, value ? value : "");
@@ -192,6 +192,9 @@ static int lua_lvgl_table_get_cell(lua_State *L)
     return 1;
 }
 
+/* Only factories are registered on the `lvgl` module table. The list and
+ * table compound operations above are exposed as methods on the list/table
+ * metatables in lua_lvgl_methods.c. */
 const luaL_Reg lua_lvgl_extra_widget_funcs[] = {
     {"image", lua_lvgl_image},
     {"line", lua_lvgl_line},
@@ -206,9 +209,5 @@ const luaL_Reg lua_lvgl_extra_widget_funcs[] = {
     {"list", lua_lvgl_list},
     {"textarea", lua_lvgl_textarea},
     {"table", lua_lvgl_table},
-    {"list_text", lua_lvgl_list_text},
-    {"list_button", lua_lvgl_list_button},
-    {"table_set_cell", lua_lvgl_table_set_cell},
-    {"table_get_cell", lua_lvgl_table_get_cell},
     {NULL, NULL},
 };

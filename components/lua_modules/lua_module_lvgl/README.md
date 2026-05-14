@@ -5,7 +5,9 @@ This module exposes a small LVGL runtime to Lua scripts.
 `lvgl` can:
 - Initialize LVGL on an existing `esp_lcd` panel handle
 - Create screens, containers, and a P1 set of LVGL widgets
-- Update widget position, size, text, value, style, and layout
+- Update widget position, size, text, value, style, and layout via methods
+- Subscribe to LVGL widget events (`obj:on / obj:off`) and dispatch them on
+  the script task via `lvgl.process_events / lvgl.run`
 - Deinitialize the LVGL runtime and release display ownership
 
 ## How to call
@@ -16,10 +18,17 @@ This module exposes a small LVGL runtime to Lua scripts.
 - Create a screen with `lvgl.create_screen()` or use `lvgl.screen()`
 - Create widgets with `lvgl.label(...)`, `lvgl.button(...)`, `lvgl.bar(...)`,
   `lvgl.slider(...)`, `lvgl.dropdown(...)`, `lvgl.table(...)`, and other P1 constructors
+- Operate on widgets via methods: `obj:set_text(...)`, `obj:set_value(...)`,
+  `obj:align(...)`, `obj:set_style(...)`, etc.
 - Call `lvgl.deinit()` when finished
 
 ## Important rules
 
+- **LVGL is a single-script subsystem.** Only one Lua script may drive LVGL
+  at a time. See [RFC-single-script-ui.md](RFC-single-script-ui.md) for the
+  full rationale and roadmap. Other capabilities must talk to the UI script
+  via events (for example through `event_publisher`) instead of calling
+  `lvgl.*` directly.
 - `lvgl` uses the same display ownership path as the `display` module.
 - Do not use `display.init(...)` and `lvgl.init(...)` at the same time.
 - The module owns a single LVGL display runtime at a time.
@@ -28,15 +37,23 @@ This module exposes a small LVGL runtime to Lua scripts.
   stops the LVGL task and tick timer, frees the draw buffer, and releases
   display ownership. Calling `lvgl.deinit()` explicitly is still recommended
   when the script is done with the UI.
-- `lvgl.init(...)` raises an error if LVGL is already initialized, including
-  when another Lua runtime owns it.
-- A non-owner Lua script cannot call `lvgl.deinit()` for a runtime created by
-  another script.
-- Lua object handles become invalid after `lvgl.deinit()` or after their parent object is deleted.
-- Objects created by a non-owner script are cleaned up when that script exits.
-  `lvgl.screen()` returns a borrowed handle and is not deleted by script cleanup.
-- P1 does not support Lua event callbacks, input device binding, custom fonts,
-  advanced style parts/states, or image decoder/filesystem setup.
+- `lvgl.init(...)` raises an error if LVGL is already initialized.
+- Lua object handles become invalid after `lvgl.deinit()` or after their
+  parent object is deleted.
+- All operations on widget objects (setters, getters, lifecycle, layout)
+  are exposed **only** as methods on the userdata. There is no
+  `lvgl.set_text(obj, ...)` style; use `obj:set_text(...)` instead. Each
+  widget metatable advertises only methods that make sense for its type,
+  so calling an unsupported method raises `attempt to call a nil value`
+  immediately at the call site rather than at runtime inside C.
+- LVGL event callbacks are dispatched on the **script task** rather than the
+  LVGL task. After registering callbacks with `obj:on(...)`, the script must
+  drive the event loop via either `lvgl.run()` (blocks until the cap_lua job
+  is asked to stop) or repeated `lvgl.process_events([timeout_ms])` calls.
+  This is what makes Lua callbacks safe in a single-script subsystem; see
+  RFC §4.2 for the reasoning.
+- P3 does not yet support input device binding, custom fonts, advanced style
+  parts/states, or image decoder/filesystem setup.
 - `lvgl.image(...)` only forwards a string `src` to LVGL. Whether that string
   can load depends on firmware FS and decoder configuration outside this module.
 - Chinese or other non-ASCII text may not render unless the firmware LVGL font configuration includes a matching font.
@@ -65,14 +82,15 @@ lvgl.label(scr, {
     y = 20,
 })
 
-lvgl.button(scr, {
+local btn = lvgl.button(scr, {
     text = "OK",
     align = "center",
     w = 120,
     h = 44,
 })
+btn:set_text("Updated")
 
-lvgl.bar(scr, {
+local bar = lvgl.bar(scr, {
     align = "bottom_mid",
     x = 0,
     y = -34,
@@ -82,13 +100,17 @@ lvgl.bar(scr, {
     max = 100,
     value = 65,
 })
+bar:set_value(80)
 
-lvgl.load(scr)
+scr:load()
 delay.delay_ms(5000)
 lvgl.deinit()
 ```
 
-## API
+## Module-level API
+
+These are the functions hosted on the `lvgl` module table itself. Every
+other operation is invoked as a method on a widget userdata.
 
 ### `lvgl.init(panel_handle, io_handle, width, height[, panel_if, options])`
 
@@ -111,8 +133,7 @@ Returns `true` on success. Raises a Lua error on failure.
 ### `lvgl.deinit()`
 
 Stops the LVGL task and tick timer, deletes the LVGL display, frees the draw buffer, and releases display ownership.
-Only the Lua script that initialized the runtime can deinitialize it explicitly.
-The same cleanup is also performed automatically when that owner script exits.
+The same cleanup is also performed automatically when the owner script exits.
 
 Returns `true`.
 
@@ -124,42 +145,46 @@ Returns the current active screen object.
 
 Creates and returns a new screen object.
 
-### `lvgl.load(screen)`
+### `lvgl.process_events([timeout_ms])`
 
-Loads a screen object.
+Drains queued LVGL events (callbacks registered with `obj:on(...)`) on the
+calling script task.
 
-Returns `true`.
+- `timeout_ms = 0` (default): single non-blocking pass; returns immediately
+  after draining whatever is currently queued
+- `timeout_ms > 0`: keeps draining for up to `timeout_ms` milliseconds. When
+  the queue empties the function sleeps in short slices (~20ms) and
+  re-checks until either the deadline expires or the cap_lua job is asked
+  to stop
 
-### Common object options
+Returns the number of callbacks invoked.
 
-Most constructors accept:
-- `text`
-- `x`, `y`
-- `w`, `h`
-- `align`
-- `min`, `max`, `value` for numeric widgets
-- style fields: `bg_color`, `text_color`, `border_color`, `bg_opa`, `opa`,
-  `radius`, `border_width`, `pad`, `pad_row`, `pad_column`, `line_color`,
-  `line_width`, `arc_width`
+### `lvgl.run([opts])`
 
-Color fields accept `0xRRGGBB` numbers or `"#RRGGBB"` strings. Style uses
-LVGL selector `0` only.
+Convenience wrapper that loops `process_events(period_ms)` until cap_lua
+asks the job to stop. Use this as the last call in a UI script:
 
-### Constructors
+```lua
+-- ... build UI, register callbacks ...
+lvgl.run()
+```
 
-`lvgl.object(parent, opts)` and `lvgl.container(parent, opts)` create a plain
-`lv_obj`.
+`opts.period_ms` (default `200`) controls the slice length; smaller values
+react to stop signals faster at the cost of slightly more CPU.
 
-`lvgl.label(parent, opts)` creates a label.
+Returns the total number of callbacks invoked across all slices.
 
-`lvgl.button(parent, opts)` creates a button. If `opts.text` is set, the module
-creates and tracks a centered child label so `lvgl.set_text(button, text)` can
-update it later.
+### Widget factories
 
-`lvgl.bar(parent, opts)` and `lvgl.slider(parent, opts)` support `min`, `max`,
-and `value`.
+Each call below returns a new widget userdata. Use the `opts` table to
+configure visual properties at creation time.
 
-P1 constructors:
+- `lvgl.object(parent, opts)`
+- `lvgl.container(parent, opts)`
+- `lvgl.label(parent, opts)`
+- `lvgl.button(parent, opts)` — if `opts.text` is set, a centered child label is created and tracked so `btn:set_text(text)` can update it later
+- `lvgl.bar(parent, opts)` — supports `min`, `max`, `value`
+- `lvgl.slider(parent, opts)` — supports `min`, `max`, `value`
 - `lvgl.image(parent, { src = "..." })`
 - `lvgl.line(parent, { points = {{x=0,y=0}, {x=10,y=10}}, y_invert = false })`
 - `lvgl.arc(parent, opts)`
@@ -174,161 +199,181 @@ P1 constructors:
 - `lvgl.textarea(parent, opts)`
 - `lvgl.table(parent, opts)`
 
-Additional helpers:
-- `lvgl.list_text(list, text) -> obj`
-- `lvgl.list_button(list, text[, symbol]) -> obj`
-- `lvgl.table_set_cell(table, row, col, text) -> true`
-- `lvgl.table_get_cell(table, row, col) -> text`
-
 Rows, columns, selected dropdown/roller indexes, and grid cell indexes are
 1-based in Lua.
 
-### Object APIs
+### Common widget options
 
-`lvgl.get_pos(obj) -> x, y`
+Most constructors accept:
+- `text`
+- `x`, `y`
+- `w`, `h`
+- `align`
+- `min`, `max`, `value` for numeric widgets
+- style fields: `bg_color`, `text_color`, `border_color`, `bg_opa`, `opa`,
+  `radius`, `border_width`, `pad`, `pad_row`, `pad_column`, `line_color`,
+  `line_width`, `arc_width`
 
-`lvgl.get_size(obj) -> w, h`
+Color fields accept `0xRRGGBB` numbers or `"#RRGGBB"` strings. Style uses
+LVGL selector `0` only.
 
-`lvgl.is_valid(obj) -> boolean`
+## Method API (`obj:method(...)`)
 
-`lvgl.get_value(obj) -> value`
+Every widget userdata carries a metatable named `lvgl.obj.<type>` whose
+`__index` chain provides:
 
-Supports bar, slider, arc, scale, dropdown, roller, checkbox, and switch.
+1. **Methods specific to the widget type** (e.g. `slider:set_value(v)`)
+2. **Base methods shared by every widget type** (e.g. `obj:align(...)`)
 
-`lvgl.set_value(obj, value[, anim]) -> true`
+A method that does not exist on a given type is simply absent from its
+metatable, so Lua reports `attempt to call a nil value (method 'set_value')`
+immediately rather than dispatching to C and failing later.
 
-Supports bar, slider, arc, scale, dropdown, roller, checkbox, and switch.
+### Base methods (available on every widget)
 
-`lvgl.set_range(obj, min, max) -> true`
+| Method                           | Returns      | Notes                                                                                  |
+| -------------------------------- | ------------ | -------------------------------------------------------------------------------------- |
+| `obj:set_pos(x, y)`              | `true`       |                                                                                        |
+| `obj:get_pos()`                  | `x, y`       |                                                                                        |
+| `obj:set_size(w, h)`             | `true`       |                                                                                        |
+| `obj:get_size()`                 | `w, h`       |                                                                                        |
+| `obj:align(name [, x, y])`       | `true`       | `name` ∈ `top_left top_mid top top_right bottom_left bottom_mid bottom bottom_right left_mid left right_mid right center centre` |
+| `obj:is_valid()`                 | `boolean`    | `false` after delete / parent delete / deinit                                          |
+| `obj:set_style(opts)`            | `true`       | Same fields as the constructor `opts`                                                  |
+| `obj:set_flex(opts)`             | `true`       | See "Layout helpers" below                                                             |
+| `obj:set_grid(opts)`             | `true`       | See "Layout helpers" below                                                             |
+| `obj:set_grid_cell(opts)`        | `true`       | Fields `col / row / col_span / row_span / col_align / row_align`                       |
+| `obj:set_scroll(opts)`           | `true`       | See "Layout helpers" below                                                             |
+| `obj:on(event, callback)`        | `handle`     | Subscribes a Lua function to an event; see "Events" below                              |
+| `obj:off([handle \| event])`     | `count`      | Cancels one subscription (handle), all subscriptions for an event name, or all if no arg |
+| `obj:delete()`                   | `true`       | Invalidates the Lua handle                                                             |
+| `obj:clean()`                    | `true`       | Deletes all children but keeps `obj`                                                   |
 
-Supports bar, slider, arc, and scale.
+### Type-specific methods
 
-`lvgl.set_text(obj, text) -> true`
+| Method            | Available on                                                          | Notes                                              |
+| ----------------- | --------------------------------------------------------------------- | -------------------------------------------------- |
+| `set_text(text)`  | `label`, `button`, `checkbox`, `dropdown`, `textarea`, `list_text`, `list_button` |                                                    |
+| `set_value(v[,a])`| `bar`, `slider`, `arc`, `scale`, `dropdown`, `roller`, `checkbox`, `switch` | `a` is a boolean for animation when supported       |
+| `get_value()`     | same as `set_value`                                                   |                                                    |
+| `set_range(l, h)` | `bar`, `slider`, `arc`, `scale`                                       |                                                    |
+| `screen:load()`   | `screen` only                                                         | Replaces the previous module-level `lvgl.load(scr)` |
+| `list:add_text(t)`        | `list` only                                                   | Returns the new `list_text` userdata                |
+| `list:add_button(t[, s])` | `list` only                                                   | Returns the new `list_button` userdata              |
+| `table:set_cell(r, c, t)` | `table` only                                                  | 1-based                                            |
+| `table:get_cell(r, c)`    | `table` only                                                  | Returns the cell text or `""`                      |
 
-Supports label, button, checkbox, dropdown, textarea, and list text/button handles.
+### Layout helpers (called via base methods)
 
-`lvgl.set_style(obj, opts) -> true`
-
-Applies the common style fields listed above.
-
-### Layout APIs
-
-`lvgl.set_flex(obj, opts) -> true`
-
-Fields:
+`obj:set_flex(opts)` fields:
 - `flow`: `row`, `column`, `row_wrap`, `row_reverse`,
   `row_wrap_reverse`, `column_wrap`, `column_reverse`, `column_wrap_reverse`
 - `main`, `cross`, `track`: `start`, `center`, `end`, `space_between`,
   `space_around`, `space_evenly`
 
-`lvgl.set_grid(obj, opts) -> true`
-
-Fields:
+`obj:set_grid(opts)` fields:
 - `cols`, `rows`: arrays of integers, `"fr"`, or `"content"`
 - `col_align`, `row_align`: `start`, `center`, `end`, `stretch`,
   `space_between`, `space_around`, `space_evenly`
 
 Grid descriptor arrays are copied into C-owned memory and remain valid until
-the object is deleted, deinitialized, or `set_grid()` is called again.
+the object is deleted, deinitialized, or `obj:set_grid()` is called again.
 
-`lvgl.set_grid_cell(obj, opts) -> true`
-
-Fields: `col`, `row`, `col_span`, `row_span`, `col_align`, `row_align`.
-
-`lvgl.set_scroll(obj, opts) -> true`
-
-Fields:
+`obj:set_scroll(opts)` fields:
 - `dir`: `none`, `left`, `right`, `top`, `bottom`, `hor`, `ver`, `all`
 - `scrollbar`: `off`, `on`, `active`, `auto`
 - `snap_x`, `snap_y`: `none`, `start`, `end`, `center`
 
-### Legacy API Notes
+## Events
 
-The older sections below are kept for quick reference.
+Each widget can subscribe Lua callbacks to LVGL events via `obj:on(event,
+callback)`. The first call returns a light userdata handle that can be
+passed to `obj:off(handle)` to cancel that subscription specifically.
 
-### `lvgl.label(parent, opts)`
+```lua
+local btn = lvgl.button(scr, { text = "OK" })
+local handle = btn:on("clicked", function()
+    print("clicked, value =", slider:get_value())
+end)
 
-Creates a label under `parent`.
+-- later
+btn:off(handle)        -- cancel one subscription
+btn:off("clicked")     -- cancel all subscriptions for that event
+btn:off()              -- cancel every subscription on btn
+```
 
-Supported options:
-- `text`
-- `x`, `y`
-- `w`, `h`
-- `align`
+Supported event names (first version):
 
-### `lvgl.button(parent, opts)`
+| Lua name          | LVGL constant            |
+| ----------------- | ------------------------ |
+| `"clicked"`       | `LV_EVENT_CLICKED`       |
+| `"pressed"`       | `LV_EVENT_PRESSED`       |
+| `"released"`      | `LV_EVENT_RELEASED`      |
+| `"long_pressed"`  | `LV_EVENT_LONG_PRESSED`  |
+| `"value_changed"` | `LV_EVENT_VALUE_CHANGED` |
+| `"focused"`       | `LV_EVENT_FOCUSED`       |
+| `"defocused"`     | `LV_EVENT_DEFOCUSED`     |
+| `"ready"`         | `LV_EVENT_READY`         |
+| `"cancel"`        | `LV_EVENT_CANCEL`        |
 
-Creates a button under `parent`. If `opts.text` is set, the module creates a centered child label inside the button.
+Callback signature: `function() ... end` (no arguments). Capture context
+via Lua closures; the `lv_event_t *` is intentionally NOT exposed because
+it lives only inside the LVGL trampoline and cannot survive the deferred
+dispatch.
 
-Supported options:
-- `text`
-- `x`, `y`
-- `w`, `h`
-- `align`
+### Driving the event loop
 
-### `lvgl.bar(parent, opts)`
+Events queued from the LVGL task are dispatched only when the script calls
+`lvgl.run()` or `lvgl.process_events([timeout_ms])`. A typical UI script
+does its setup work at the top, then sits in `lvgl.run()` until the
+cap_lua job is stopped:
 
-Creates a bar under `parent`.
+```lua
+local scr = lvgl.create_screen()
+local btn = lvgl.button(scr, { text = "Tap" })
+btn:on("clicked", function()
+    print("tap")
+end)
+scr:load()
+lvgl.run()              -- returns when cap_lua stop is requested
+```
 
-Supported options:
-- `x`, `y`
-- `w`, `h`
-- `align`
-- `min`, `max`, `value`
+If the script needs to do its own periodic work in the same loop:
 
-### `lvgl.slider(parent, opts)`
+```lua
+while not done do
+    lvgl.process_events(50)   -- drain for up to 50ms
+    -- update non-LVGL state, push frames over MQTT, etc.
+end
+```
 
-Creates a slider under `parent`.
+### Coalescing semantics
 
-Supported options:
-- `x`, `y`
-- `w`, `h`
-- `align`
-- `min`, `max`, `value`
+If the same callback fires repeatedly before `process_events` drains it,
+all but the first fire are coalesced into a single dispatched call. This
+matches typical UI expectations ("react to the latest event") and prevents
+the queue from growing unbounded under fast input. In a future iteration
+this may become opt-out via a per-subscription flag.
 
-### `lvgl.set_text(obj, text)`
+### Error handling
 
-Sets text on a label, button, checkbox, dropdown, textarea, or list text/button object.
+If a callback raises a Lua error, it is logged at `ESP_LOGE` (tag
+`lua_lvgl_evt`) and the script continues. The subscription is **not**
+auto-cancelled.
 
-Returns `true`.
+## Implementation notes
 
-### `lvgl.set_pos(obj, x, y)`
-
-Sets object position.
-
-Returns `true`.
-
-### `lvgl.set_size(obj, w, h)`
-
-Sets object size.
-
-Returns `true`.
-
-### `lvgl.align(obj, align[, x, y])`
-
-Aligns an object.
-
-Supported align strings:
-- `"top_left"`
-- `"top_mid"` or `"top"`
-- `"top_right"`
-- `"bottom_left"`
-- `"bottom_mid"` or `"bottom"`
-- `"bottom_right"`
-- `"left_mid"` or `"left"`
-- `"right_mid"` or `"right"`
-- `"center"` or `"centre"`
-
-Returns `true`.
-
-### `lvgl.delete(obj)`
-
-Deletes an LVGL object and invalidates the Lua handle.
-
-Returns `true`.
-
-### `lvgl.clean(obj)`
-
-Deletes all children of an LVGL object.
-
-Returns `true`.
+- All `lvgl.obj.<type>` metatables share an `__lvgl_obj = true` sentinel
+  field. The internal `lua_lvgl_check_ud()` uses this sentinel to recognize
+  any LVGL widget without being bound to a single metatable name. This is
+  what makes the per-type metatable layout possible while keeping the
+  ud-check logic uniform.
+- Method tables inherit from a single shared "base methods" table via
+  `__index`, so adding a base method only touches one place in
+  `src/lua_lvgl_methods.c`.
+- The event subsystem in `src/lua_lvgl_events.c` decouples LVGL-task event
+  firing from script-task callback dispatch through two queues on
+  `s_lvgl`: an event FIFO of pending subscriptions and a deferred
+  `pending_unrefs` list of registry refs. The LVGL trampoline never touches
+  the Lua state; only `process_events / run / obj:off / deinit` running on
+  the script task do `lua_pcall` and `luaL_unref`.
