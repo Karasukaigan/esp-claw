@@ -154,7 +154,7 @@ Use this skill to inspect and modify event router rules through the direct calla
 
 ```json
 {
-  "rule_json": "{\"id\":\"im_new_session\",\"enabled\":true,\"consume_on_match\":true,\"match\":{\"event_type\":\"message\",\"event_key\":\"text\",\"content_type\":\"text\",\"text\":\"/new\"},\"actions\":[{\"type\":\"call_cap\",\"cap\":\"roll_chat_session\",\"input\":{}},{\"type\":\"send_message\",\"input\":{\"channel\":\"{{event.source_channel}}\",\"chat_id\":\"{{event.chat_id}}\",\"message\":\"Started a new session.\"}}]}"
+  "rule_json": "{\"id\":\"im_new_session\",\"enabled\":true,\"consume_on_match\":true,\"match\":{\"event_type\":\"message\",\"event_key\":\"text\",\"content_type\":\"text\",\"text\":\"/new\"},\"actions\":[{\"type\":\"call_cap\",\"cap\":\"new_chat_session\",\"input\":{}},{\"type\":\"send_message\",\"input\":{\"channel\":\"{{event.source_channel}}\",\"chat_id\":\"{{event.chat_id}}\",\"message\":\"Started a new session.\"}}]}"
 }
 ```
 

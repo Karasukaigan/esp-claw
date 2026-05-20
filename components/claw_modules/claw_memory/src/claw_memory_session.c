@@ -610,6 +610,24 @@ static bool session_history_path_exists(const char *path)
     return stat(path, &st) == 0;
 }
 
+static esp_err_t session_history_unlink_path(const char *path, bool *out_deleted_any)
+{
+    if (!path || !path[0] || !out_deleted_any) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (unlink(path) == 0) {
+        *out_deleted_any = true;
+        return ESP_OK;
+    }
+    if (errno == ENOENT) {
+        return ESP_OK;
+    }
+
+    ESP_LOGE(TAG, "delete session history artifact %s failed: errno=%d", path, errno);
+    return ESP_FAIL;
+}
+
 static esp_err_t session_history_close_file(FILE *file);
 
 static esp_err_t session_history_mark_blocked(const char *data_path)
@@ -1891,6 +1909,58 @@ cleanup:
     }
     free(data_path);
     free(idx_path);
+    return err;
+}
+
+esp_err_t claw_memory_delete_session_history(const char *session_id,
+                                             bool *out_deleted_any)
+{
+    char *data_path = NULL;
+    char *idx_path = NULL;
+    char *blocked_path = NULL;
+    bool deleted_any = false;
+    esp_err_t err = ESP_OK;
+
+    if (!session_id || !session_id[0] || !out_deleted_any) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!s_memory.initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    *out_deleted_any = false;
+
+    data_path = claw_memory_session_path_dup(session_id);
+    if (!data_path) {
+        ESP_LOGE(TAG, "allocate session history path failed");
+        return ESP_ERR_NO_MEM;
+    }
+    idx_path = session_history_idx_path_dup(data_path);
+    blocked_path = session_history_blocked_path_dup(data_path);
+    if (!idx_path || !blocked_path) {
+        err = ESP_ERR_NO_MEM;
+        goto cleanup;
+    }
+
+    err = session_history_unlink_path(data_path, &deleted_any);
+    if (err != ESP_OK) {
+        goto cleanup;
+    }
+    err = session_history_unlink_path(idx_path, &deleted_any);
+    if (err != ESP_OK) {
+        goto cleanup;
+    }
+    err = session_history_unlink_path(blocked_path, &deleted_any);
+    if (err != ESP_OK) {
+        goto cleanup;
+    }
+
+cleanup:
+    free(data_path);
+    free(idx_path);
+    free(blocked_path);
+    if (err == ESP_OK) {
+        *out_deleted_any = deleted_any;
+    }
     return err;
 }
 

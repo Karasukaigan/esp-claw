@@ -25,10 +25,8 @@ static const char *TAG = "cap_session_mgr";
 #define CAP_SESSION_MGR_PATH_SIZE    256
 #define CAP_SESSION_MGR_KEY_SIZE     128
 #define CAP_SESSION_MGR_ID_SIZE      128
-#define CAP_SESSION_MGR_ALIAS_SIZE   33
 #define CAP_SESSION_MGR_ALIAS_MAX    32
 #define CAP_SESSION_MGR_MAX_SESSIONS 32
-#define CAP_SESSION_MGR_FILE_MAX     4096
 #define CAP_SESSION_MGR_DEFAULT_BASE "default_"
 
 typedef struct {
@@ -36,14 +34,16 @@ typedef struct {
     char session_root_dir[160];
     char mapping_root_dir[192];
     SemaphoreHandle_t mutex;
+    cap_session_mgr_delete_session_fn_t delete_session;
+    void *delete_session_ctx;
 } cap_session_mgr_state_t;
 
 typedef struct {
     char chat_key[CAP_SESSION_MGR_KEY_SIZE];
-    char current_alias[CAP_SESSION_MGR_ALIAS_SIZE];
+    char current_alias[CAP_SESSION_MGR_ALIAS_MAX + 1];
     uint32_t next_default_index;
     size_t session_count;
-    char sessions[CAP_SESSION_MGR_MAX_SESSIONS][CAP_SESSION_MGR_ALIAS_SIZE];
+    char sessions[CAP_SESSION_MGR_MAX_SESSIONS][CAP_SESSION_MGR_ALIAS_MAX + 1];
 } cap_session_mgr_alias_map_t;
 
 static cap_session_mgr_state_t s_session_mgr = {0};
@@ -96,6 +96,7 @@ static bool cap_session_mgr_is_session_command_event(const claw_event_t *event)
 
     text = cap_session_mgr_skip_ascii_space(event->text);
     return cap_session_mgr_text_is_command(text, "/new") ||
+           cap_session_mgr_text_is_command(text, "/delete") ||
            cap_session_mgr_text_is_command(text, "/switch");
 }
 
@@ -320,54 +321,6 @@ static esp_err_t cap_session_mgr_build_mapping_path(const char *chat_key, char *
     return ESP_OK;
 }
 
-static esp_err_t cap_session_mgr_read_file_limited(const char *path, char **out_text)
-{
-    FILE *file = NULL;
-    long size;
-    char *text = NULL;
-    size_t read_bytes;
-
-    if (!path || !path[0] || !out_text) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    *out_text = NULL;
-
-    file = fopen(path, "rb");
-    if (!file) {
-        return errno == ENOENT ? ESP_ERR_NOT_FOUND : ESP_FAIL;
-    }
-    if (fseek(file, 0, SEEK_END) != 0) {
-        fclose(file);
-        return ESP_FAIL;
-    }
-    size = ftell(file);
-    if (size < 0 || size > CAP_SESSION_MGR_FILE_MAX) {
-        fclose(file);
-        return size < 0 ? ESP_FAIL : ESP_ERR_INVALID_SIZE;
-    }
-    if (fseek(file, 0, SEEK_SET) != 0) {
-        fclose(file);
-        return ESP_FAIL;
-    }
-
-    text = calloc(1, (size_t)size + 1);
-    if (!text) {
-        fclose(file);
-        return ESP_ERR_NO_MEM;
-    }
-    read_bytes = fread(text, 1, (size_t)size, file);
-    if (read_bytes != (size_t)size && ferror(file)) {
-        fclose(file);
-        free(text);
-        return ESP_FAIL;
-    }
-    fclose(file);
-    text[read_bytes] = '\0';
-    *out_text = text;
-
-    return ESP_OK;
-}
-
 static esp_err_t cap_session_mgr_write_mapping_locked(const cap_session_mgr_alias_map_t *map)
 {
     char path[CAP_SESSION_MGR_PATH_SIZE];
@@ -438,6 +391,8 @@ static esp_err_t cap_session_mgr_load_mapping_locked(const char *chat_key,
 {
     char path[CAP_SESSION_MGR_PATH_SIZE];
     char *text = NULL;
+    FILE *file = NULL;
+    long size = 0;
     cJSON *root = NULL;
     cJSON *item = NULL;
     cJSON *sessions = NULL;
@@ -452,10 +407,36 @@ static esp_err_t cap_session_mgr_load_mapping_locked(const char *chat_key,
     if (err != ESP_OK) {
         return err;
     }
-    err = cap_session_mgr_read_file_limited(path, &text);
-    if (err != ESP_OK) {
-        return err;
+
+    file = fopen(path, "rb");
+    if (!file) {
+        return ESP_ERR_NOT_FOUND;
     }
+    if (fseek(file, 0, SEEK_END) != 0) {
+        fclose(file);
+        return ESP_FAIL;
+    }
+    size = ftell(file);
+    if (size < 0) {
+        fclose(file);
+        return ESP_FAIL;
+    }
+    if (fseek(file, 0, SEEK_SET) != 0) {
+        fclose(file);
+        return ESP_FAIL;
+    }
+
+    text = calloc(1, (size_t)size + 1);
+    if (!text) {
+        fclose(file);
+        return ESP_ERR_NO_MEM;
+    }
+    if (size > 0 && fread(text, 1, (size_t)size, file) != (size_t)size) {
+        fclose(file);
+        free(text);
+        return ESP_FAIL;
+    }
+    fclose(file);
 
     root = cJSON_Parse(text);
     free(text);
@@ -594,6 +575,25 @@ static esp_err_t cap_session_mgr_build_current_session_id_locked(const char *sou
     return ESP_OK;
 }
 
+static esp_err_t cap_session_mgr_build_alias_session_id(const char *chat_key,
+                                                        const char *alias,
+                                                        char *buf,
+                                                        size_t buf_size)
+{
+    int written;
+
+    if (!chat_key || !chat_key[0] || !alias || !alias[0] || !buf || buf_size == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    written = snprintf(buf, buf_size, "%s:%s", chat_key, alias);
+    if (written < 0 || (size_t)written >= buf_size) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    return ESP_OK;
+}
+
 static esp_err_t cap_session_mgr_new_session_locked(const char *source_channel,
                                                     const char *chat_id,
                                                     const char *requested_alias,
@@ -605,7 +605,7 @@ static esp_err_t cap_session_mgr_new_session_locked(const char *source_channel,
 {
     char chat_key[CAP_SESSION_MGR_KEY_SIZE];
     cap_session_mgr_alias_map_t map;
-    char new_alias[CAP_SESSION_MGR_ALIAS_SIZE];
+    char new_alias[CAP_SESSION_MGR_ALIAS_MAX + 1];
     uint32_t next_index = 0;
     esp_err_t err;
 
@@ -697,6 +697,78 @@ static esp_err_t cap_session_mgr_switch_session_locked(const char *source_channe
         strlcpy(out_alias, alias, out_alias_size);
     }
 
+    return ESP_OK;
+}
+
+static esp_err_t cap_session_mgr_delete_session_locked(const char *source_channel,
+                                                       const char *chat_id,
+                                                       const char *alias,
+                                                       char *out_alias,
+                                                       size_t out_alias_size)
+{
+    char chat_key[CAP_SESSION_MGR_KEY_SIZE];
+    char session_id[CAP_SESSION_MGR_ID_SIZE];
+    cap_session_mgr_alias_map_t map;
+    bool deleted_any = false;
+    size_t alias_index = CAP_SESSION_MGR_MAX_SESSIONS;
+    esp_err_t err;
+
+    err = cap_session_mgr_build_chat_key(source_channel, chat_id, chat_key, sizeof(chat_key));
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    err = cap_session_mgr_load_mapping_locked(chat_key, &map);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    for (size_t i = 0; i < map.session_count; i++) {
+        if (strcmp(map.sessions[i], alias) == 0) {
+            alias_index = i;
+            break;
+        }
+    }
+    if (alias_index == CAP_SESSION_MGR_MAX_SESSIONS) {
+        return ESP_ERR_NOT_FOUND;
+    }
+    if (strcmp(map.current_alias, alias) == 0) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!s_session_mgr.delete_session) {
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+
+    err = cap_session_mgr_build_alias_session_id(chat_key, alias, session_id, sizeof(session_id));
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    err = s_session_mgr.delete_session(session_id, &deleted_any, s_session_mgr.delete_session_ctx);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Delete session history failed for %s: %s", session_id, esp_err_to_name(err));
+        return err;
+    }
+
+    for (size_t i = alias_index; i + 1 < map.session_count; i++) {
+        strlcpy(map.sessions[i], map.sessions[i + 1], sizeof(map.sessions[i]));
+    }
+    map.session_count--;
+    map.sessions[map.session_count][0] = '\0';
+
+    err = cap_session_mgr_write_mapping_locked(&map);
+    if (err != ESP_OK) {
+        return err;
+    }
+    if (out_alias && out_alias_size > 0) {
+        strlcpy(out_alias, alias, out_alias_size);
+    }
+
+    ESP_LOGI(TAG,
+             "Deleted chat session %s alias=%s history_deleted=%s",
+             chat_key,
+             alias,
+             deleted_any ? "true" : "false");
     return ESP_OK;
 }
 
@@ -849,8 +921,8 @@ static esp_err_t cap_session_mgr_new_execute(const char *input_json,
                                              char *output,
                                              size_t output_size)
 {
-    char alias[CAP_SESSION_MGR_ALIAS_SIZE];
-    char created_alias[CAP_SESSION_MGR_ALIAS_SIZE];
+    char alias[CAP_SESSION_MGR_ALIAS_MAX + 1];
+    char created_alias[CAP_SESSION_MGR_ALIAS_MAX + 1];
     bool has_alias = false;
     esp_err_t err;
 
@@ -911,8 +983,8 @@ static esp_err_t cap_session_mgr_switch_execute(const char *input_json,
                                                 char *output,
                                                 size_t output_size)
 {
-    char alias[CAP_SESSION_MGR_ALIAS_SIZE];
-    char switched_alias[CAP_SESSION_MGR_ALIAS_SIZE];
+    char alias[CAP_SESSION_MGR_ALIAS_MAX + 1];
+    char switched_alias[CAP_SESSION_MGR_ALIAS_MAX + 1];
     bool has_alias = false;
     esp_err_t err;
 
@@ -972,56 +1044,82 @@ static esp_err_t cap_session_mgr_switch_execute(const char *input_json,
     return ESP_OK;
 }
 
-static esp_err_t cap_session_mgr_roll_execute(const char *input_json,
-                                              const claw_cap_call_context_t *ctx,
-                                              char *output,
-                                              size_t output_size)
+static esp_err_t cap_session_mgr_delete_execute(const char *input_json,
+                                                const claw_cap_call_context_t *ctx,
+                                                char *output,
+                                                size_t output_size)
 {
-    char alias[CAP_SESSION_MGR_ALIAS_SIZE];
-    char session_id[CAP_SESSION_MGR_ID_SIZE];
+    char alias[CAP_SESSION_MGR_ALIAS_MAX + 1];
+    char deleted_alias[CAP_SESSION_MGR_ALIAS_MAX + 1];
+    bool has_alias = false;
     esp_err_t err;
 
-    (void)input_json;
-
-    if (!ctx || !ctx->channel || !ctx->channel[0] || !ctx->chat_id || !ctx->chat_id[0]) {
-        if (output && output_size > 0) {
-            snprintf(output, output_size, "{\"ok\":false,\"error\":\"channel and chat_id are required\"}");
-        }
-        return ESP_ERR_INVALID_ARG;
+    if (!cap_session_mgr_context_ready(ctx, output, output_size)) {
+        return ESP_OK;
     }
-    if (!s_session_mgr.configured || !s_session_mgr.mutex) {
-        if (output && output_size > 0) {
-            snprintf(output, output_size, "{\"ok\":false,\"error\":\"session manager not configured\"}");
-        }
-        return ESP_ERR_INVALID_STATE;
+
+    err = cap_session_mgr_read_alias_input(input_json, alias, sizeof(alias), &has_alias);
+    if (!has_alias && err == ESP_OK) {
+        cap_session_mgr_write_message(output,
+                                      output_size,
+                                      "Session name is required. Usage: /delete <session_name>");
+        return ESP_OK;
+    }
+    if (err == ESP_ERR_INVALID_SIZE) {
+        cap_session_mgr_write_message(output,
+                                      output_size,
+                                      "Invalid session name: use 1-32 characters from A-Z, a-z, 0-9, _ or -.");
+        return ESP_OK;
+    }
+    if (err != ESP_OK) {
+        cap_session_mgr_write_message(output,
+                                      output_size,
+                                      "Invalid session name: use 1-32 characters from A-Z, a-z, 0-9, _ or -.");
+        return ESP_OK;
     }
 
     xSemaphoreTakeRecursive(s_session_mgr.mutex, portMAX_DELAY);
-    err = cap_session_mgr_new_session_locked(ctx->channel,
-                                             ctx->chat_id,
-                                             NULL,
-                                             false,
-                                             alias,
-                                             sizeof(alias),
-                                             session_id,
-                                             sizeof(session_id));
+    err = cap_session_mgr_delete_session_locked(ctx->channel,
+                                                ctx->chat_id,
+                                                alias,
+                                                deleted_alias,
+                                                sizeof(deleted_alias));
     xSemaphoreGiveRecursive(s_session_mgr.mutex);
+
+    if (err == ESP_ERR_NOT_FOUND) {
+        cap_session_mgr_write_format(output,
+                                     output_size,
+                                     "Cannot delete session \"%s\": no such session. Send /switch to list sessions.",
+                                     alias);
+        return ESP_OK;
+    }
+    if (err == ESP_ERR_INVALID_STATE) {
+        cap_session_mgr_write_format(output,
+                                     output_size,
+                                     "Cannot delete the current session \"%s\". Switch to another session first.",
+                                     alias);
+        return ESP_OK;
+    }
+    if (err == ESP_ERR_NOT_SUPPORTED) {
+        cap_session_mgr_write_message(output,
+                                      output_size,
+                                      "Session command failed: session history deletion is unavailable.");
+        return ESP_OK;
+    }
     if (err != ESP_OK) {
         ESP_LOGE(TAG,
-                 "Roll chat session failed for %s:%s: %s",
+                 "Delete chat session failed for %s:%s alias=%s: %s",
                  ctx->channel,
                  ctx->chat_id,
+                 alias,
                  esp_err_to_name(err));
-        if (output && output_size > 0) {
-            snprintf(output, output_size, "{\"ok\":false,\"error\":\"%s\"}", esp_err_to_name(err));
-        }
-        return err;
+        cap_session_mgr_write_message(output,
+                                      output_size,
+                                      "Session command failed: unable to access session storage.");
+        return ESP_OK;
     }
 
-    ESP_LOGI(TAG, "Rolled chat session %s:%s to alias %s", ctx->channel, ctx->chat_id, alias);
-    if (output && output_size > 0) {
-        snprintf(output, output_size, "{\"ok\":true,\"session_id\":\"%s\",\"alias\":\"%s\"}", session_id, alias);
-    }
+    cap_session_mgr_write_format(output, output_size, "Deleted session: %s", deleted_alias);
     return ESP_OK;
 }
 
@@ -1047,14 +1145,14 @@ static const claw_cap_descriptor_t s_session_mgr_caps[] = {
         .execute = cap_session_mgr_switch_execute,
     },
     {
-        .id = "roll_chat_session",
-        .name = "roll_chat_session",
+        .id = "delete_chat_session",
+        .name = "delete_chat_session",
         .family = "system",
-        .description = "Advance the current chat to a fresh persistent session.",
+        .description = "Delete a non-current aliased persistent chat session.",
         .kind = CLAW_CAP_KIND_CALLABLE,
         .cap_flags = CLAW_CAP_FLAG_RESTRICTED,
-        .input_schema_json = "{\"type\":\"object\",\"properties\":{}}",
-        .execute = cap_session_mgr_roll_execute,
+        .input_schema_json = "{\"type\":\"object\",\"properties\":{\"alias\":{\"type\":\"string\"}}}",
+        .execute = cap_session_mgr_delete_execute,
     },
 };
 
@@ -1075,6 +1173,8 @@ esp_err_t cap_session_mgr_set_session_root_dir(const char *session_root_dir)
 {
     int written;
     SemaphoreHandle_t mutex = s_session_mgr.mutex;
+    cap_session_mgr_delete_session_fn_t delete_session = s_session_mgr.delete_session;
+    void *delete_session_ctx = s_session_mgr.delete_session_ctx;
 
     if (!session_root_dir || !session_root_dir[0]) {
         return ESP_ERR_INVALID_ARG;
@@ -1082,6 +1182,8 @@ esp_err_t cap_session_mgr_set_session_root_dir(const char *session_root_dir)
 
     memset(&s_session_mgr, 0, sizeof(s_session_mgr));
     s_session_mgr.mutex = mutex;
+    s_session_mgr.delete_session = delete_session;
+    s_session_mgr.delete_session_ctx = delete_session_ctx;
     strlcpy(s_session_mgr.session_root_dir, session_root_dir, sizeof(s_session_mgr.session_root_dir));
     written = snprintf(s_session_mgr.mapping_root_dir,
                        sizeof(s_session_mgr.mapping_root_dir),
@@ -1104,6 +1206,21 @@ esp_err_t cap_session_mgr_set_session_root_dir(const char *session_root_dir)
     }
 
     s_session_mgr.configured = true;
+    return ESP_OK;
+}
+
+esp_err_t cap_session_mgr_set_delete_session_handler(cap_session_mgr_delete_session_fn_t fn,
+                                                     void *user_ctx)
+{
+    if (s_session_mgr.mutex) {
+        xSemaphoreTakeRecursive(s_session_mgr.mutex, portMAX_DELAY);
+    }
+    s_session_mgr.delete_session = fn;
+    s_session_mgr.delete_session_ctx = user_ctx;
+    if (s_session_mgr.mutex) {
+        xSemaphoreGiveRecursive(s_session_mgr.mutex);
+    }
+
     return ESP_OK;
 }
 

@@ -532,7 +532,7 @@ static bool claw_event_router_parse_text_match_rule(const cJSON *match,
 
     value = cJSON_GetStringValue(item);
     if (!value || !value[0] || strcmp(value, "exact") == 0) {
-        return value && value[0];
+        return true;
     }
     if (strcmp(value, "prefix") == 0) {
         *out_rule = CLAW_EVENT_ROUTER_TEXT_MATCH_PREFIX;
