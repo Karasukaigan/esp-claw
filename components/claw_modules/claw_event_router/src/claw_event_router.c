@@ -1733,12 +1733,13 @@ static esp_err_t claw_event_router_execute_agent_action(
         claw_event_router_parse_session_policy(session_policy, &agent_event.session_policy);
     }
 
-    request.request_id = s_runtime->next_request_id++;
     if (claw_event_router_build_session_id_with_config(&agent_event, session_id, sizeof(session_id)) > 0) {
         request.session_id = session_id;
     }
     request.flags = CLAW_CORE_REQUEST_FLAG_PUBLISH_OUT_MESSAGE |
-                    CLAW_CORE_REQUEST_FLAG_SKIP_RESPONSE_QUEUE;
+                    CLAW_CORE_REQUEST_FLAG_SKIP_RESPONSE_QUEUE |
+                    CLAW_CORE_REQUEST_FLAG_USER_INTERRUPT;
+    request.request_id = s_runtime->next_request_id++;
     request.user_text = (text && text[0]) ? text : (event->text ? event->text : "");
     request.source_channel = event->source_channel;
     request.source_chat_id = event->chat_id;
@@ -1755,7 +1756,7 @@ static esp_err_t claw_event_router_execute_agent_action(
         claw_event_router_update_last_output(ctx,
                                              "agent",
                                              request.target_channel,
-                                             "queued",
+                                             "submitted",
                                              submit_output);
     } else {
         claw_event_router_update_last_output(ctx, "agent", request.target_channel, "error",
