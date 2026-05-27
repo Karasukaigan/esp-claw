@@ -23,6 +23,7 @@ import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
 | `ssd1306` | `lua_driver_i2c` | 纯 Lua SSD1306 I2C OLED 驱动 |
 | `lib_si12t_touch` | `lua_driver_i2c` | 纯 Lua Si12T I2C 电容触摸驱动 |
 | `mcpwm` | `lua_driver_mcpwm` | 通用 PWM 输出（频率/占空比控制） |
+| `pcnt` | `lua_driver_pcnt` | PCNT 脉冲计数器/编码器读取 |
 | `touch` | `lua_driver_touch` | 电容触摸按键数据读取 |
 | `uart` | `lua_driver_uart` | UART 串口收发（polling 读写） |
 
@@ -31,6 +32,7 @@ import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
 | 模块名 | 组件目录 | 说明 |
 |--------|----------|------|
 | `audio` | `lua_module_audio` | 音频播放/录制（PCM/WAV）与频谱分析 |
+| `ble_hid` | `lua_module_ble_hid` | BLE HID 复合外设（媒体控制、键盘、鼠标） |
 | `board_manager` | `lua_module_board_manager` | 板级初始化与外设句柄获取 |
 | `button` | `lua_module_button` | 按键事件注册与回调 |
 | `capability` | `lua_module_call_capability` | 从 Lua 脚本直接调用已注册 Capability |
@@ -40,6 +42,9 @@ import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
 | `display` | `lua_module_display` | LCD 屏幕绘图（文字、图形、JPEG/PNG） |
 | `environmental_sensor` | `lua_module_environmental_sensor` | BME690 温度、湿度、气压与气体数据读取 |
 | `event_publisher` | `lua_module_event_publisher` | 从 Lua 脚本向 Event Router 发布事件 |
+| `http_server` | `lua_module_http_server` | 在现有 HTTP 服务器上发布静态文件与 HTTP 回调 |
+| `image` | `lua_module_image` | 通用图像帧类型、格式转换、缩放与文件读写 |
+| `json` | `lua_module_json` | JSON 编码/解码辅助库 |
 | `lib_fuel_gauge` | `lua_module_fuel_gauge` | 纯 Lua 电池电量计库，支持 BQ27220/MAX17048 等 |
 | `imu` | `lua_module_imu` | IMU 加速度计与陀螺仪数据读取 |
 | `ir` | `lua_module_ir` | 红外接收、学习与发送 |
@@ -47,9 +52,13 @@ import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
 | `lcd` | `lua_module_lcd` | LCD 面板初始化、背光与显示辅助控制 |
 | `lcd_touch` | `lua_module_lcd_touch` | 触摸屏坐标读取 |
 | `led_strip` | `lua_module_led_strip` | WS2812 等可寻址 LED 灯带控制 |
+| `lvgl` | `lua_module_lvgl` | LVGL 图形库绑定，支持完整 UI 控件与事件系统 |
 | `magnetometer` | `lua_module_magnetometer` | 磁力计/指南针数据读取 |
+| `motion_detect` | `lua_module_vision` | 基于 image.frame 的运动检测 |
+| `sci` | `lua_module_sci` | DFRobot SCI 采集模块（DFR0999）I2C 读取 |
 | `storage` | `lua_module_storage` | 文件系统操作 |
 | `system` | `lua_module_system` | 时间、运行时长、IP、内存、堆、任务栈与 Wi-Fi 状态查询 |
+| `thread` | `lua_module_thread` | Lua 任务管理、命名同步队列/信号量/事件组 |
 | `arg_schema` | `lua_module_system` | 纯 Lua 参数归一化辅助库 |
 
 <Aside type="note" title="模块条件编译">
@@ -93,7 +102,7 @@ void app_lua_modules_init(void)
     lua_module_delay_register();
     // ... 其他模块 ...
 
-    cap_lua_register_group();  // 锁定，之后不能再注册模块
+    cap_lua_register_group("/fatfs/scripts");  // 传入脚本基目录，锁定后不能再注册模块
 }
 ```
 
@@ -353,7 +362,7 @@ static int lua_module_gpio_set_level(lua_State *L)
 当底层 ESP-IDF 调用失败时，模块用 `luaL_error` 将错误传回 Lua 运行时。
 这类错误会成为脚本执行失败结果，便于调用方看到明确原因。
 
-激活该 Skill 时，Lua 运行工具（`lua_run_script`、`lua_run_script_async` 等）会对当前 session 可见，同时 Skill 文档注入上下文，LLM 即可编写并执行使用 `myled` 模块的脚本。脚本文件通过 `write_file`、`read_file`、`list_dir` 等文件工具创建和检查。
+激活该 Skill 时，Lua 运行工具（`lua_run_script`、`lua_run_script_async` 等）会对当前 session 可见，同时 Skill 文档作为 `activate_skill` 的工具返回值注入会话历史，LLM 即可编写并执行使用 `myled` 模块的脚本。脚本文件通过 `write_file`、`read_file`、`list_dir` 等文件工具创建和检查。
 
 ### 字符串枚举映射
 
