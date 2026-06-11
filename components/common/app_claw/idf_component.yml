@@ -106,6 +106,9 @@ dependencies:
   claw_skill:
     path: ../../claw_modules/claw_skill
 
+  claw_utils:
+    path: ../../claw_modules/claw_utils
+
   skill_builder:
     path: ../../common/skill_builder
 
